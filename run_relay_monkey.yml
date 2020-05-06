@@ -1,0 +1,92 @@
+---
+- hosts: all
+  
+  become: yes # Conflicts with `pipelining`
+  become_user: root
+
+  # become_method: su
+
+  gather_facts: no
+
+  vars:
+    ansible_python_interpreter: /usr/bin/python # Remove warning
+
+  tasks:
+    - name: Install required system packages
+      apt:
+        update_cache: yes
+        force_apt_get: yes
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg-agent
+          - software-properties-common
+          - python3-pip
+          - virtualenv
+          - python3-setuptools
+          - wget
+        state: latest
+
+    - name: Set Python 3 as default
+      alternatives:
+        name: python
+        link: /usr/bin/python
+        path: /usr/bin/python3
+
+    - name: Add Docker GPG apt Key
+      apt_key:
+        url: https://download.docker.com/linux/debian/gpg
+        state: present
+
+    - name: Add Docker Repository
+      apt_repository:
+        repo: deb https://download.docker.com/linux/debian buster stable
+        state: present
+
+    - name: Install Docker
+      apt:
+        update_cache: yes
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+        state: latest
+
+    - name: Download DigitalOcean client
+      get_url:
+        url: "https://github.com/digitalocean/doctl/releases/download/v1.43.0/doctl-1.43.0-linux-amd64.tar.gz"
+        dest: "~"
+
+    - name: Extract DigitalOcean archive
+      unarchive:
+        src: "~/doctl-1.43.0-linux-amd64.tar.gz"
+        dest: "/usr/local/bin"
+        remote_src: true
+
+    - name: DigitalOcean Docker registry login
+      command: doctl registry login -t {{ lookup('env','DO_TOKEN') }} -v
+
+    - name: Install Docker Module for Python (used by Ansible)
+      pip:
+        name: docker
+
+    - name: Pull Docker image
+      docker_image:
+        name: "registry.digitalocean.com/global-latency/relaymonkey-agent"
+        source: pull
+        force_source: true
+      tags:
+        - pull_image
+
+    - name: Run Relay Monkey Agent container
+      docker_container:
+        name: remoa
+        image: registry.digitalocean.com/global-latency/relaymonkey-agent
+        env:
+          RELAYMONKEY_FINGERPRINT: "{{ RELAYMONKEY_FINGERPRINT }}"
+          RELAYMONKEY_PING_NTH_MINUTE: "58"
+        recreate: yes
+        # restart_policy: always
+      tags:
+        - run_agent
